@@ -125,7 +125,9 @@ export interface DeviationResponse {
 export interface TemperatureRecord {
     id: string;
     name: string;
+    ville: string;
     departement: string;
+    date_creation: string;
     record: number;
     record_date: string;
 }
