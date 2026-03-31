@@ -251,3 +251,46 @@ class TemperatureDeviationResponseSerializer(serializers.Serializer):
     metadata = TemperatureDeviationMetadataSerializer()
     national = TemperatureDeviationNationalSerializer(required=False)
     stations = TemperatureDeviationStationSerializer(many=True)
+
+
+class TemperatureRecordsQuerySerializer(serializers.Serializer):
+    period_type = serializers.ChoiceField(
+        choices=["month", "season", "all_time"],
+        required=False,
+        default="all_time",
+    )
+    month = serializers.IntegerField(required=False, min_value=1, max_value=12)
+    season = serializers.ChoiceField(
+        choices=["spring", "summer", "autumn", "winter"],
+        required=False,
+    )
+    type_records = serializers.ChoiceField(
+        choices=["hot", "cold"],
+        required=False,
+        default="hot",
+    )
+
+    def validate(self, attrs):
+        period_type = attrs.get("period_type", "all_time")
+        month = attrs.get("month")
+        season = attrs.get("season")
+
+        if period_type == "month" and month is None:
+            raise serializers.ValidationError(
+                {"month": "Requis si period_type=month."}
+            )
+
+        if period_type == "season" and season is None:
+            raise serializers.ValidationError(
+                {"season": "Requis si period_type=season."}
+            )
+
+        return attrs
+
+
+class TemperatureRecordEntrySerializer(serializers.Serializer):
+    station_id = serializers.CharField()
+    station_name = serializers.CharField()
+    department = serializers.CharField()
+    record_value = serializers.FloatField()
+    record_date = serializers.DateField()
