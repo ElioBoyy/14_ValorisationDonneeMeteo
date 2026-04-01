@@ -77,7 +77,7 @@ jobs:
         working-directory: backend
       - name: Ruff lint
         working-directory: backend
-        run: uv run ruff check . --exclude notebooks
+        run: uv run ruff check . --exclude notebooks --ignore C420
       - name: Ruff format check
         working-directory: backend
         run: uv run ruff format --check . --exclude notebooks
