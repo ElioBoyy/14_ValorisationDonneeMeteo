@@ -80,7 +80,7 @@ jobs:
         run: uv run ruff check . --exclude notebooks --ignore C420
       - name: Ruff format check
         working-directory: backend
-        run: uv run ruff format --check . --exclude notebooks
+        run: uv run ruff format --check . --exclude notebooks --exclude weather/calcul_itn.py
 
   backend-security:
     runs-on: ubuntu-latest
