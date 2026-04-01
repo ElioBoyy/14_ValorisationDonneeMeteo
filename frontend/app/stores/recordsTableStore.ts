@@ -9,7 +9,7 @@ import type {
 
 const debounceDuration = 300;
 
-export const useRecordsStore = defineStore("recordsStore", () => {
+export const useRecordsTableStore = defineStore("recordsTableStore", () => {
     // Pagination
     const page = ref(1);
     const pageSize = ref(10);
