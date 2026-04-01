@@ -1,0 +1,294 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  DOCKER_IMAGE_BACKEND: ghcr.io/${{ github.repository }}/backend
+  DOCKER_IMAGE_FRONTEND: ghcr.io/${{ github.repository }}/frontend
+
+jobs:
+  # ── Backend ────────────────────────────────────────────────
+  backend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --locked --all-extras
+        working-directory: backend
+      - name: Run tests
+        working-directory: backend
+        run: uv run pytest --junitxml=test-report.xml --cov=. --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-test-report
+          path: |
+            backend/test-report.xml
+            backend/coverage.xml
+
+  backend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --locked --all-extras
+        working-directory: backend
+      - name: Ruff lint
+        working-directory: backend
+        run: uv run ruff check .
+      - name: Ruff format check
+        working-directory: backend
+        run: uv run ruff format --check .
+
+  backend-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv sync --locked --all-extras
+        working-directory: backend
+      - name: Export requirements
+        working-directory: backend
+        run: uv pip freeze --python .venv/bin/python > requirements-frozen.txt
+      - name: Security scan (pip-audit)
+        working-directory: backend
+        run: uvx pip-audit -r requirements-frozen.txt --output=security-report.json --format=json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-security-report
+          path: backend/security-report.json
+
+  # ── Frontend ───────────────────────────────────────────────
+  frontend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24  # required by package.json engines >=24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - name: Run tests
+        working-directory: frontend
+        run: npm run test:ci -- --reporter=junit --outputFile=test-report.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-test-report
+          path: frontend/test-report.xml
+
+  frontend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24  # required by package.json engines >=24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - name: ESLint
+        working-directory: frontend
+        run: npm run lint
+
+  frontend-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24  # required by package.json engines >=24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - name: npm audit
+        working-directory: frontend
+        run: |
+          set +e
+          npm audit --audit-level=high --json > npm-audit-report.json
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -gt 1 ]; then exit $EXIT_CODE; fi
+          echo "npm audit exited with code $EXIT_CODE (1 = vulns found, 0 = clean)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-security-report
+          path: frontend/npm-audit-report.json
+
+  # ── Docker Build ───────────────────────────────────────────
+  docker-build-backend:
+    needs: [backend-test, backend-lint, backend-security]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: ${{ github.ref == 'refs/heads/main' }}
+          load: true
+          tags: |
+            ${{ env.DOCKER_IMAGE_BACKEND }}:latest
+            ${{ env.DOCKER_IMAGE_BACKEND }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Save image for Trivy
+        run: docker save ${{ env.DOCKER_IMAGE_BACKEND }}:latest -o /tmp/backend-image.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-docker-image
+          path: /tmp/backend-image.tar
+          retention-days: 1
+
+  docker-build-frontend:
+    needs: [frontend-test, frontend-lint, frontend-security]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: ${{ github.ref == 'refs/heads/main' }}
+          load: true
+          tags: |
+            ${{ env.DOCKER_IMAGE_FRONTEND }}:latest
+            ${{ env.DOCKER_IMAGE_FRONTEND }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Save image for Trivy
+        run: docker save ${{ env.DOCKER_IMAGE_FRONTEND }}:latest -o /tmp/frontend-image.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-docker-image
+          path: /tmp/frontend-image.tar
+          retention-days: 1
+
+  # ── Trivy Scan ─────────────────────────────────────────────
+  trivy-backend:
+    needs: docker-build-backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure jq is available
+        run: command -v jq || sudo apt-get install -yq jq
+      - uses: actions/download-artifact@v4
+        with:
+          name: backend-docker-image
+          path: /tmp
+      - name: Load image
+        run: docker load -i /tmp/backend-image.tar
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.DOCKER_IMAGE_BACKEND }}:latest
+          format: json
+          output: trivy-backend-report.json
+      - name: Trivy table output
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.DOCKER_IMAGE_BACKEND }}:latest
+          format: table
+      - name: Generate VEX file
+        run: |
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          STATEMENTS=$(jq '[.Results[]?.Vulnerabilities[]? | {
+            vulnerability: { "@id": .VulnerabilityID, name: .VulnerabilityID, description: .Title },
+            products: [{ "@id": .PkgName, subcomponents: [{ "@id": .InstalledVersion }] }],
+            status: "under_investigation"
+          }]' trivy-backend-report.json 2>/dev/null || echo '[]')
+          jq -n --arg ctx "https://openvex.dev/ns/v0.2.0" \
+                --arg id "https://github.com/${{ github.repository }}/vex/backend" \
+                --arg author "${{ github.actor }}" \
+                --arg ts "$TIMESTAMP" \
+                --argjson stmts "$STATEMENTS" \
+                '{"@context":$ctx,"@id":$id,"author":$author,"timestamp":$ts,"statements":$stmts}' \
+                > trivy-backend-vex.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trivy-backend-report
+          path: |
+            trivy-backend-report.json
+            trivy-backend-vex.json
+
+  trivy-frontend:
+    needs: docker-build-frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure jq is available
+        run: command -v jq || sudo apt-get install -yq jq
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-docker-image
+          path: /tmp
+      - name: Load image
+        run: docker load -i /tmp/frontend-image.tar
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.DOCKER_IMAGE_FRONTEND }}:latest
+          format: json
+          output: trivy-frontend-report.json
+      - name: Trivy table output
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.DOCKER_IMAGE_FRONTEND }}:latest
+          format: table
+      - name: Generate VEX file
+        run: |
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          STATEMENTS=$(jq '[.Results[]?.Vulnerabilities[]? | {
+            vulnerability: { "@id": .VulnerabilityID, name: .VulnerabilityID, description: .Title },
+            products: [{ "@id": .PkgName, subcomponents: [{ "@id": .InstalledVersion }] }],
+            status: "under_investigation"
+          }]' trivy-frontend-report.json 2>/dev/null || echo '[]')
+          jq -n --arg ctx "https://openvex.dev/ns/v0.2.0" \
+                --arg id "https://github.com/${{ github.repository }}/vex/frontend" \
+                --arg author "${{ github.actor }}" \
+                --arg ts "$TIMESTAMP" \
+                --argjson stmts "$STATEMENTS" \
+                '{"@context":$ctx,"@id":$id,"author":$author,"timestamp":$ts,"statements":$stmts}' \
+                > trivy-frontend-vex.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trivy-frontend-report
+          path: |
+            trivy-frontend-report.json
+            trivy-frontend-vex.json
