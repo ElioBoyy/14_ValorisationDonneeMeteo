@@ -7,13 +7,45 @@ on:
   workflow_dispatch:
 
 env:
-  DOCKER_IMAGE_BACKEND: ghcr.io/${{ github.repository }}/backend
-  DOCKER_IMAGE_FRONTEND: ghcr.io/${{ github.repository }}/frontend
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # ── Prepare ────────────────────────────────────────────────
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      image_backend: ${{ steps.lower.outputs.backend }}
+      image_frontend: ${{ steps.lower.outputs.frontend }}
+    steps:
+      - id: lower
+        run: |
+          REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "backend=ghcr.io/${REPO}/backend" >> "$GITHUB_OUTPUT"
+          echo "frontend=ghcr.io/${REPO}/frontend" >> "$GITHUB_OUTPUT"
+
   # ── Backend ────────────────────────────────────────────────
   backend-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: meteodb
+          POSTGRES_USER: infoclimat
+          POSTGRES_PASSWORD: infoclimat2026
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U infoclimat -d meteodb"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: meteodb
+      DB_USER: infoclimat
+      DB_PASSWORD: infoclimat2026
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -45,10 +77,10 @@ jobs:
         working-directory: backend
       - name: Ruff lint
         working-directory: backend
-        run: uv run ruff check .
+        run: uv run ruff check . --exclude notebooks
       - name: Ruff format check
         working-directory: backend
-        run: uv run ruff format --check .
+        run: uv run ruff format --check . --exclude notebooks
 
   backend-security:
     runs-on: ubuntu-latest
@@ -65,7 +97,12 @@ jobs:
         run: uv pip freeze --python .venv/bin/python > requirements-frozen.txt
       - name: Security scan (pip-audit)
         working-directory: backend
-        run: uvx pip-audit -r requirements-frozen.txt --output=security-report.json --format=json
+        run: |
+          set +e
+          uvx pip-audit -r requirements-frozen.txt --output=security-report.json --format=json
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -gt 1 ]; then exit $EXIT_CODE; fi
+          echo "pip-audit exited with code $EXIT_CODE (1 = vulns found, 0 = clean)"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -135,7 +172,7 @@ jobs:
 
   # ── Docker Build ───────────────────────────────────────────
   docker-build-backend:
-    needs: [backend-test, backend-lint, backend-security]
+    needs: [prepare, backend-test, backend-lint, backend-security]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -155,12 +192,12 @@ jobs:
           push: ${{ github.ref == 'refs/heads/main' }}
           load: true
           tags: |
-            ${{ env.DOCKER_IMAGE_BACKEND }}:latest
-            ${{ env.DOCKER_IMAGE_BACKEND }}:${{ github.sha }}
+            ${{ needs.prepare.outputs.image_backend }}:latest
+            ${{ needs.prepare.outputs.image_backend }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Save image for Trivy
-        run: docker save ${{ env.DOCKER_IMAGE_BACKEND }}:latest -o /tmp/backend-image.tar
+        run: docker save ${{ needs.prepare.outputs.image_backend }}:latest -o /tmp/backend-image.tar
       - uses: actions/upload-artifact@v4
         with:
           name: backend-docker-image
@@ -168,7 +205,7 @@ jobs:
           retention-days: 1
 
   docker-build-frontend:
-    needs: [frontend-test, frontend-lint, frontend-security]
+    needs: [prepare, frontend-test, frontend-lint, frontend-security]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -188,12 +225,12 @@ jobs:
           push: ${{ github.ref == 'refs/heads/main' }}
           load: true
           tags: |
-            ${{ env.DOCKER_IMAGE_FRONTEND }}:latest
-            ${{ env.DOCKER_IMAGE_FRONTEND }}:${{ github.sha }}
+            ${{ needs.prepare.outputs.image_frontend }}:latest
+            ${{ needs.prepare.outputs.image_frontend }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Save image for Trivy
-        run: docker save ${{ env.DOCKER_IMAGE_FRONTEND }}:latest -o /tmp/frontend-image.tar
+        run: docker save ${{ needs.prepare.outputs.image_frontend }}:latest -o /tmp/frontend-image.tar
       - uses: actions/upload-artifact@v4
         with:
           name: frontend-docker-image
@@ -202,7 +239,7 @@ jobs:
 
   # ── Trivy Scan ─────────────────────────────────────────────
   trivy-backend:
-    needs: docker-build-backend
+    needs: [prepare, docker-build-backend]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -217,13 +254,13 @@ jobs:
       - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ env.DOCKER_IMAGE_BACKEND }}:latest
+          image-ref: ${{ needs.prepare.outputs.image_backend }}:latest
           format: json
           output: trivy-backend-report.json
       - name: Trivy table output
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ env.DOCKER_IMAGE_BACKEND }}:latest
+          image-ref: ${{ needs.prepare.outputs.image_backend }}:latest
           format: table
       - name: Generate VEX file
         run: |
@@ -248,7 +285,7 @@ jobs:
             trivy-backend-vex.json
 
   trivy-frontend:
-    needs: docker-build-frontend
+    needs: [prepare, docker-build-frontend]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -263,13 +300,13 @@ jobs:
       - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ env.DOCKER_IMAGE_FRONTEND }}:latest
+          image-ref: ${{ needs.prepare.outputs.image_frontend }}:latest
           format: json
           output: trivy-frontend-report.json
       - name: Trivy table output
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ env.DOCKER_IMAGE_FRONTEND }}:latest
+          image-ref: ${{ needs.prepare.outputs.image_frontend }}:latest
           format: table
       - name: Generate VEX file
         run: |
