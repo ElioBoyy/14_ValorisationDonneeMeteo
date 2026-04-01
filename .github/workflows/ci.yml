@@ -252,13 +252,13 @@ jobs:
       - name: Load image
         run: docker load -i /tmp/backend-image.tar
       - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: ${{ needs.prepare.outputs.image_backend }}:latest
           format: json
           output: trivy-backend-report.json
       - name: Trivy table output
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: ${{ needs.prepare.outputs.image_backend }}:latest
           format: table
@@ -298,13 +298,13 @@ jobs:
       - name: Load image
         run: docker load -i /tmp/frontend-image.tar
       - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: ${{ needs.prepare.outputs.image_frontend }}:latest
           format: json
           output: trivy-frontend-report.json
       - name: Trivy table output
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: ${{ needs.prepare.outputs.image_frontend }}:latest
           format: table
