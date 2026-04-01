@@ -243,25 +243,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure jq is available
-        run: command -v jq || sudo apt-get install -yq jq
+      - name: Install Trivy
+        run: |
+          sudo apt-get install -yq wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update && sudo apt-get install -yq trivy
       - uses: actions/download-artifact@v4
         with:
           name: backend-docker-image
           path: /tmp
       - name: Load image
         run: docker load -i /tmp/backend-image.tar
-      - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          image-ref: ${{ needs.prepare.outputs.image_backend }}:latest
-          format: json
-          output: trivy-backend-report.json
-      - name: Trivy table output
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          image-ref: ${{ needs.prepare.outputs.image_backend }}:latest
-          format: table
+      - name: Trivy vulnerability scan (JSON)
+        run: trivy image --format json --output trivy-backend-report.json ${{ needs.prepare.outputs.image_backend }}:latest
+      - name: Trivy vulnerability scan (table)
+        run: trivy image --format table ${{ needs.prepare.outputs.image_backend }}:latest
       - name: Generate VEX file
         run: |
           TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -289,25 +286,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure jq is available
-        run: command -v jq || sudo apt-get install -yq jq
+      - name: Install Trivy
+        run: |
+          sudo apt-get install -yq wget apt-transport-https gnupg lsb-release
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update && sudo apt-get install -yq trivy
       - uses: actions/download-artifact@v4
         with:
           name: frontend-docker-image
           path: /tmp
       - name: Load image
         run: docker load -i /tmp/frontend-image.tar
-      - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          image-ref: ${{ needs.prepare.outputs.image_frontend }}:latest
-          format: json
-          output: trivy-frontend-report.json
-      - name: Trivy table output
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          image-ref: ${{ needs.prepare.outputs.image_frontend }}:latest
-          format: table
+      - name: Trivy vulnerability scan (JSON)
+        run: trivy image --format json --output trivy-frontend-report.json ${{ needs.prepare.outputs.image_frontend }}:latest
+      - name: Trivy vulnerability scan (table)
+        run: trivy image --format table ${{ needs.prepare.outputs.image_frontend }}:latest
       - name: Generate VEX file
         run: |
           TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
