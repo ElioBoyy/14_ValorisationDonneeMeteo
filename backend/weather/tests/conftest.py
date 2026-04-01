@@ -33,6 +33,8 @@ def setup_db_schema_and_views(django_db_setup, django_db_blocker):
                     END;
                 END $$;
             """)
+            cur.execute("DROP TABLE IF EXISTS public.mv_records_absolus_meta;")
+            cur.execute("DROP TABLE IF EXISTS public.mv_records_absolus;")
             cur.execute("DROP VIEW IF EXISTS public.v_records_absolus CASCADE;")
             cur.execute("DROP VIEW IF EXISTS public.v_quotidienne_itn CASCADE;")
             cur.execute("DROP VIEW IF EXISTS public.v_station CASCADE;")
@@ -41,3 +43,18 @@ def setup_db_schema_and_views(django_db_setup, django_db_blocker):
             cur.execute(v_quot_sql)
             cur.execute(v_records_sql)
             cur.execute(baseline_mv_sql)
+            cur.execute(
+                "CREATE TABLE public.mv_records_absolus_meta (cutoff_date DATE NOT NULL);"
+            )
+            cur.execute("""
+                CREATE TABLE public.mv_records_absolus (
+                    period_type   text,
+                    period_value  text,
+                    record_type   text,
+                    station_code  char(8),
+                    station_name  text,
+                    department    integer,
+                    record_value  double precision,
+                    record_date   timestamp
+                );
+            """)
